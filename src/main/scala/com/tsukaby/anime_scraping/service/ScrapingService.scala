@@ -42,14 +42,15 @@ trait ScrapingService extends BaseService {
     }
 
     val strDateTime = if (year.length > 0 && year(0).length > 2) {
-      Some(year(0)(2).take(7))
+      val monthCharIndex = year(0)(2).indexOf("月")
+      Some(year(0)(2).take(monthCharIndex + 1))
     } else {
       None
     }
 
 
     val start = try {
-      strDateTime.map(x => DateTimeFormat.forPattern("yyyy年MM月").parseDateTime(x).toLocalDate)
+      strDateTime.map(x => DateTimeFormat.forPattern("yyyy年M月").parseDateTime(x).toLocalDate)
     } catch {
       case _: Throwable =>
         None
