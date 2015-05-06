@@ -1,6 +1,7 @@
 package com.tsukaby.anime_scraping.service
 
-import java.io.StringReader
+import java.io.{File, PrintWriter, FileNotFoundException, StringReader}
+import java.net.URLDecoder
 
 import com.github.nscala_time.time.Imports._
 import com.tsukaby.anime_scraping.service.Season.{Autumn, Spring, Summer, Winter}
@@ -10,9 +11,10 @@ import nu.validator.htmlparser.common.XmlViolationPolicy
 import nu.validator.htmlparser.sax.HtmlParser
 import org.xml.sax.InputSource
 
-import scala.collection.{immutable, mutable}
+import scala.collection.immutable
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
+import scala.io.Source
 import scala.language.postfixOps
 import scala.xml.parsing.NoBindingFactoryAdapter
 import scala.xml.{Node, Text}
@@ -21,8 +23,6 @@ import scala.xml.{Node, Text}
  * web pageをscrapingします
  */
 trait ScrapingService extends BaseService {
-
-  lazy val cache = mutable.Map[String, Node]()
 
   def getAnime(link: String): Anime = {
     require(link.nonEmpty)
@@ -38,8 +38,8 @@ trait ScrapingService extends BaseService {
     val year: immutable.Seq[Array[String]] = for {
       b <- entryBody \\ "tr" if b.text contains "放送期間"
     } yield {
-      b.text.split("\n")
-    }
+        b.text.split("\n")
+      }
 
     val strDateTime = if (year.length > 0 && year(0).length > 2) {
       val monthCharIndex = year(0)(2).indexOf("月")
@@ -151,18 +151,35 @@ trait ScrapingService extends BaseService {
   private def getNode(pageUrl: String): Node = {
     require(pageUrl.nonEmpty)
 
-    cache.getOrElse(pageUrl, {
-      var req = url(pageUrl)
-      req = req <:< immutable.Map("User-Agent" -> "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Win64; x64; Trident/5.0)")
-      val res: Future[Array[Byte]] = Http(req OK as.Bytes)
-      val content = Await.result[Array[Byte]](res, Duration.Inf)
-      val body = new String(content, "UTF-8")
-      val node = toNode(body)
+    val filePath = cachedFilePath(pageUrl)
 
-      cache.put(pageUrl, node)
-      node
-    })
+    val file = try {
+      Source.fromFile(filePath).getLines().foldLeft("")(_ + _)
+    } catch {
+      case e: FileNotFoundException =>
+        var req = url(pageUrl)
+        req = req <:< immutable.Map("User-Agent" -> "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Win64; x64; Trident/5.0)")
+        val res: Future[Array[Byte]] = Http(req OK as.Bytes)
+        val content = Await.result[Array[Byte]](res, Duration.Inf)
+        val body = new String(content, "UTF-8")
 
+        val writer = new PrintWriter(new File(filePath))
+        writer.write(body)
+        writer.close()
+
+        body
+    }
+
+    val node = toNode(file)
+    node
+
+  }
+
+  private def cachedFilePath(pageUrl: String): String = {
+    require(pageUrl.nonEmpty)
+    val filePath = ".tmp/" + pageUrl.replace("http://", "").replace("/", "_") + ".html"
+
+    URLDecoder.decode(filePath,"utf-8")
   }
 
   def toNode(str: String): Node = {
