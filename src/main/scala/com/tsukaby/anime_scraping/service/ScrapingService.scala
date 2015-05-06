@@ -31,7 +31,7 @@ trait ScrapingService extends BaseService {
 
     for {
       nodeOpt <- nodeF
-      url <- linkF
+      officialSiteUrl <- linkF
     } yield for {
       node <- nodeOpt
     } yield {
@@ -47,9 +47,11 @@ trait ScrapingService extends BaseService {
           b.text.split("\n")
         }
 
-      val strDateTime = if (year.length > 0 && year(0).length > 2) {
-        val monthCharIndex = year(0)(2).indexOf("月")
-        Some(year(0)(2).take(monthCharIndex + 1))
+      val strDateTime = if (year.length > 0 && year(0).length > 0) {
+        // indexを使って*****YYYY年M月*****の年月部分のみ抜き出す
+        val monthCharIndex = year(0)(0).indexOf("月")
+        val yearCharIndex = year(0)(0).indexOf("年")
+        Some(year(0)(0).substring(yearCharIndex - 4, monthCharIndex + 1))
       } else {
         None
       }
@@ -64,7 +66,7 @@ trait ScrapingService extends BaseService {
 
       val season = start.map(toSeason)
 
-      Anime(title, start, season, url)
+      Anime(title, start, season, 1, Some(1), "原作", officialSiteUrl.getOrElse("http://"), link)
 
     }
 

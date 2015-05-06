@@ -7,7 +7,7 @@ import com.tsukaby.anime_scraping.service.ScrapingService
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Await
 
 /**
  * Sample
@@ -26,7 +26,15 @@ class ScrapingController extends BaseController {
 
     val f = new File(s"animes_$year.csv")
     val writer = CSVWriter.open(f)
-    writer.writeRow("title" :: "url" :: "thumbnailDelay" :: "season" :: "year" :: Nil)
+    writer.writeRow("name" ::
+      "year" ::
+      "season_type" ::
+      "production_company_id" ::
+      "director_id" ::
+      "original_piece" ::
+      "official_site_url" ::
+      "wikipedia_site_url" ::
+      Nil)
 
     val process = for {
       links <- links
@@ -39,7 +47,15 @@ class ScrapingController extends BaseController {
         } {
           println(anime)
           val season = anime.season.map(_.toString.replaceAll("$", "").toLowerCase) getOrElse ""
-          writer.writeRow(anime.name :: anime.officialSiteUrl.getOrElse("") :: "0" :: season :: anime.startDateTime.map(_.getYear).getOrElse("") :: Nil)
+          writer.writeRow(anime.name ::
+            anime.startDateTime.map(_.getYear).getOrElse("") ::
+            season ::
+            anime.productionCompanyId :: // TODO 制作会社ID
+            anime.directorId.getOrElse(1) :: // TODO 監督ID
+            anime.originalPiece :: // TODO 原作
+            anime.officialSiteUrl ::
+            anime.wikipediaSiteUrl ::
+            Nil)
         }
 
       }
