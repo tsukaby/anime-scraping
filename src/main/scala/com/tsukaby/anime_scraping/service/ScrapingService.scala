@@ -26,9 +26,12 @@ trait ScrapingService extends BaseService {
   def getAnime(link: String): Future[Option[Anime]] = {
     require(link.nonEmpty)
 
+    val nodeF = getNode(link)
+    val linkF = getOfficialSiteLink(link)
+
     for {
-      nodeOpt <- getNode(link)
-      url <- getOfficialSiteLink(link)
+      nodeOpt <- nodeF
+      url <- linkF
     } yield for {
       node <- nodeOpt
     } yield {
@@ -178,9 +181,9 @@ trait ScrapingService extends BaseService {
         var req = url(pageUrl)
         req = req <:< immutable.Map("User-Agent" -> "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Win64; x64; Trident/5.0)")
 
-        Http(req OK as.Bytes).either.map {
+        Http(req).either.map {
           case Right(content) =>
-            val body = new String(content, "UTF-8")
+            val body = content.getResponseBody("UTF-8")
 
             // caching
             val writer = new PrintWriter(new File(filePath))
