@@ -5,6 +5,10 @@ import java.io.File
 import com.github.tototoshi.csv.CSVWriter
 import com.tsukaby.anime_scraping.service.ScrapingService
 
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Future}
+
 /**
  * Sample
  */
@@ -24,15 +28,24 @@ class ScrapingController extends BaseController {
     val writer = CSVWriter.open(f)
     writer.writeRow("title" :: "url" :: "thumbnailDelay" :: "season" :: "year" :: Nil)
 
-    links foreach { x =>
-      Thread.sleep(5000)
-      val anime = scrapingService.getAnime(x._2)
-      println(anime)
+    val process = for {
+      links <- links
+    } yield {
+      links foreach { x =>
+        for {
+          animeOpt <- scrapingService.getAnime(x._2)
+        } yield for {
+          anime <- animeOpt
+        } {
+          println(anime)
+          val season = anime.season.map(_.toString.replaceAll("$", "").toLowerCase) getOrElse ""
+          writer.writeRow(anime.name :: anime.officialSiteUrl.getOrElse("") :: "0" :: season :: anime.startDateTime.map(_.getYear).getOrElse("") :: Nil)
+        }
 
-      val season = anime.season.map(_.toString.replaceAll("$", "").toLowerCase) getOrElse ""
-
-      writer.writeRow(anime.name :: anime.officialSiteUrl.getOrElse("") :: "0" :: season :: anime.startDateTime.map(_.getYear).getOrElse("") :: Nil)
+      }
     }
+
+    Await.ready(process, Duration.Inf)
 
     writer.close()
   }

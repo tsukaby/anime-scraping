@@ -12,8 +12,7 @@ import nu.validator.htmlparser.sax.HtmlParser
 import org.xml.sax.InputSource
 
 import scala.collection.immutable
-import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Future
 import scala.io.Source
 import scala.language.postfixOps
 import scala.xml.parsing.NoBindingFactoryAdapter
@@ -24,60 +23,68 @@ import scala.xml.{Node, Text}
  */
 trait ScrapingService extends BaseService {
 
-  def getAnime(link: String): Anime = {
+  def getAnime(link: String): Future[Option[Anime]] = {
     require(link.nonEmpty)
 
-    val node = getNode(link)
-
-    // title
-    val title: String = node \\ "h1" find (_ \ "@id" contains Text("firstHeading")) map (_.text) getOrElse ("")
-
-    // year
-    val entryBody = node \\ "table" filter (_ \ "@class" contains Text("infobox bordered"))
-
-    val year: immutable.Seq[Array[String]] = for {
-      b <- entryBody \\ "tr" if b.text contains "放送期間"
+    for {
+      nodeOpt <- getNode(link)
+      url <- getOfficialSiteLink(link)
+    } yield for {
+      node <- nodeOpt
     } yield {
-        b.text.split("\n")
+      // title
+      val title: String = node \\ "h1" find (_ \ "@id" contains Text("firstHeading")) map (_.text) getOrElse ("")
+
+      // year
+      val entryBody = node \\ "table" filter (_ \ "@class" contains Text("infobox bordered"))
+
+      val year: immutable.Seq[Array[String]] = for {
+        b <- entryBody \\ "tr" if b.text contains "放送期間"
+      } yield {
+          b.text.split("\n")
+        }
+
+      val strDateTime = if (year.length > 0 && year(0).length > 2) {
+        val monthCharIndex = year(0)(2).indexOf("月")
+        Some(year(0)(2).take(monthCharIndex + 1))
+      } else {
+        None
       }
 
-    val strDateTime = if (year.length > 0 && year(0).length > 2) {
-      val monthCharIndex = year(0)(2).indexOf("月")
-      Some(year(0)(2).take(monthCharIndex + 1))
-    } else {
-      None
+
+      val start = try {
+        strDateTime.map(x => DateTimeFormat.forPattern("yyyy年M月").parseDateTime(x).toLocalDate)
+      } catch {
+        case _: Throwable =>
+          None
+      }
+
+      val season = start.map(toSeason)
+
+      Anime(title, start, season, url)
+
     }
 
-
-    val start = try {
-      strDateTime.map(x => DateTimeFormat.forPattern("yyyy年M月").parseDateTime(x).toLocalDate)
-    } catch {
-      case _: Throwable =>
-        None
-    }
-
-    val season = start.map(toSeason)
-
-    // site
-    val url = getOfficialSiteLink(link)
-
-    Anime(title, start, season, url)
   }
 
-  private def getOfficialSiteLink(link: String): Option[String] = {
+  private def getOfficialSiteLink(link: String): Future[Option[String]] = {
     require(link.nonEmpty)
 
-    val node = getNode(link)
+    for {
+      nodeOpt <- getNode(link)
+    } yield for {
+      node <- nodeOpt
+    } yield {
+      //公式サイトURLの候補
+      val links = node \\ "ul" \\ "li" \\ "a" filter (_ \ "@class" contains Text("external text"))
+      val candidate: Seq[(String, String)] = links map (x => (x.text, x.attribute("href").map(_(0).text).getOrElse("")))
 
-    //公式サイトURLの候補
-    val links = node \\ "ul" \\ "li" \\ "a" filter (_ \ "@class" contains Text("external text"))
-    val candidate: Seq[(String, String)] = links map (x => (x.text, x.attribute("href").map(_(0).text).getOrElse("")))
+      //各URLに公式サイトである可能のポイント付けを行う
+      val sorted = candidate.map(x => calcPoint(x) -> x._2).sortBy(_._1).reverse
 
-    //各URLに公式サイトである可能のポイント付けを行う
-    val sorted = candidate.map(x => calcPoint(x) -> x._2).sortBy(_._1).reverse
-
-    // 一番先頭の要素がアニメ公式サイト（である可能性が高い）
-    sorted.map(_._2).headOption
+      // 一番先頭の要素がアニメ公式サイト（である可能性が高い）
+      sorted.map(_._2).head
+    }
   }
 
   private def calcPoint(obj: (String, String)) = {
@@ -136,50 +143,68 @@ trait ScrapingService extends BaseService {
    * @param pageUrl 対象とするアニメ一覧のWikiページ
    * @return アニメのタイトルとアニメのWikiページのリンク
    */
-  def getWikiLinks(pageUrl: String): Seq[(String, String)] = {
-    val node = getNode(pageUrl)
+  def getWikiLinks(pageUrl: String): Future[Seq[(String, String)]] = {
+    for {
+      nodeOpt <- getNode(pageUrl)
+    } yield {
+      nodeOpt match {
+        case Some(node) =>
+          val linksBody = node \\ "div" filter (_ \ "@id" contains Text("mw-pages"))
 
-    val linksBody = node \\ "div" filter (_ \ "@id" contains Text("mw-pages"))
-
-    (linksBody \\ "a") map { x =>
-      val title = x.text
-      val href = "http://ja.wikipedia.org" + x.attribute("href").map(_(0).text).getOrElse("")
-      (title, href)
+          (linksBody \\ "a") map { x =>
+            val title = x.text
+            val href = "http://ja.wikipedia.org" + x.attribute("href").map(_(0).text).getOrElse("")
+            (title, href)
+          }
+        case None =>
+          Seq()
+      }
     }
   }
 
-  private def getNode(pageUrl: String): Node = {
+  private def getNode(pageUrl: String): Future[Option[Node]] = {
     require(pageUrl.nonEmpty)
 
     val filePath = cachedFilePath(pageUrl)
 
+
     val file = try {
-      Source.fromFile(filePath).getLines().foldLeft("")(_ + _)
+      val body = Source.fromFile(filePath).getLines().foldLeft("")(_ + _)
+      println(s"Use cache : $filePath")
+      Future(Some(body))
     } catch {
       case e: FileNotFoundException =>
+        println(s"No cached : $filePath")
         var req = url(pageUrl)
         req = req <:< immutable.Map("User-Agent" -> "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Win64; x64; Trident/5.0)")
-        val res: Future[Array[Byte]] = Http(req OK as.Bytes)
-        val content = Await.result[Array[Byte]](res, Duration.Inf)
-        val body = new String(content, "UTF-8")
 
-        val writer = new PrintWriter(new File(filePath))
-        writer.write(body)
-        writer.close()
+        Http(req OK as.Bytes).either.map {
+          case Right(content) =>
+            val body = new String(content, "UTF-8")
 
-        body
+            // caching
+            val writer = new PrintWriter(new File(filePath))
+            writer.write(body)
+            writer.close()
+
+            Some(body)
+          case Left(StatusCode(404)) =>
+            println(s"Not found : $pageUrl")
+            None
+          case Left(err) =>
+            println(s"Something error : ${err.getMessage}")
+            None
+        }
     }
 
-    val node = toNode(file)
-    node
-
+    file.map(_.map(toNode))
   }
 
   private def cachedFilePath(pageUrl: String): String = {
     require(pageUrl.nonEmpty)
     val filePath = ".tmp/" + pageUrl.replace("http://", "").replace("/", "_") + ".html"
 
-    URLDecoder.decode(filePath,"utf-8")
+    URLDecoder.decode(filePath, "utf-8")
   }
 
   def toNode(str: String): Node = {
