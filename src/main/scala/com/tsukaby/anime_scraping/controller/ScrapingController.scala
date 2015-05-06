@@ -46,7 +46,7 @@ class ScrapingController extends BaseController {
           anime <- animeOpt
         } {
           println(anime)
-          val season = anime.season.map(_.toString.replaceAll("$", "").toLowerCase) getOrElse ""
+          val season = anime.season.map(_.typeId.toString) getOrElse ""
           writer.writeRow(anime.name ::
             anime.startDateTime.map(_.getYear).getOrElse("") ::
             season ::
